@@ -83,6 +83,11 @@ public class ComplaintManager {
         }
     }
 
+    // Used by the web front-end to render the complaints table.
+    public List<Complaint> getAllComplaints() {
+        return complaints;
+    }
+
     public Complaint getComplaintById(String id) {
         for (Complaint c : complaints) {
             if (c.getId().equalsIgnoreCase(id)) {

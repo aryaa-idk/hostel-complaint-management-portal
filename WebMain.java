@@ -5,7 +5,6 @@ import observer.StudentObserver;
 import proxy.AdminProxy;
 
 import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.ByteArrayOutputStream;
@@ -17,14 +16,22 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-// A tiny local web server for the Hostel Complaint Management System.
-// Uses only the built-in JDK HTTP server (com.sun.net.httpserver) --
-// no Spring, no extra libraries, no Maven dependencies.
-// It calls the SAME pattern classes as Main.java / MainGUI.java, so
-// Singleton, Factory Method, Chain of Responsibility, Observer and
-// Proxy all still run exactly as before.
+// WEB FRONT-END for the Hostel Complaint Management System.
+//
+// ONE single webpage with TWO tabs (Student / Admin).
+// Tabs are plain HTML + CSS only (radio buttons + labels) --
+// no JavaScript, no frameworks.
+//
+// The tab layout is ONLY a UI organization mechanism:
+// all design-pattern logic stays in the Java backend:
+//   FACTORY METHOD   -> ComplaintFactory
+//   SINGLETON        -> ComplaintManager
+//   CHAIN OF RESP.   -> ComplaintHandler / EscalationChain (called by manager)
+//   OBSERVER         -> StudentObserver (triggered by setStatus)
+//   PROXY            -> AdminProxy (admin status updates)
 public class WebMain {
 
     // SINGLETON: same single manager instance used everywhere.
@@ -33,11 +40,10 @@ public class WebMain {
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
 
-        server.createContext("/", WebMain::handleHome);
-        server.createContext("/submit", WebMain::handleSubmit);
-        server.createContext("/view", WebMain::handleView);
-        server.createContext("/admin", WebMain::handleAdmin);
-        server.createContext("/escalate", WebMain::handleEscalate);
+        server.createContext("/", WebMain::handleHome);       // GET: the one webpage
+        server.createContext("/submit", WebMain::handleSubmit);   // POST: student submits
+        server.createContext("/admin", WebMain::handleAdmin);     // POST: proxy status update
+        server.createContext("/escalate", WebMain::handleEscalate); // POST: escalation chain
 
         server.setExecutor(null); // simple default executor
         server.start();
@@ -46,46 +52,15 @@ public class WebMain {
         System.out.println("Open this in your browser: http://localhost:8080/");
     }
 
-    // ---------- Home page: shows Submit form + Admin form + link to View ----------
+    // =================================================================
+    // GET / -- THE one and only webpage (two CSS-only tabs)
+    // =================================================================
     private static void handleHome(HttpExchange exchange) throws IOException {
-        String html =
-                page("Home",
-                        "<h2>Submit a Complaint</h2>" +
-                        "<form method='POST' action='/submit'>" +
-                        "  <label>Student Name:</label><input type='text' name='name' required><br>" +
-                        "  <label>Room Number:</label><input type='text' name='room' required><br>" +
-                        "  <label>Complaint Type:</label>" +
-                        "  <select name='type'>" +
-                        "    <option value='1'>Electrical</option>" +
-                        "    <option value='2'>Plumbing</option>" +
-                        "    <option value='3'>Cleaning</option>" +
-                        "    <option value='4'>Internet</option>" +
-                        "    <option value='5'>Furniture</option>" +
-                        "  </select><br>" +
-                        "  <label>Description:</label><br>" +
-                        "  <textarea name='description' rows='4' cols='40' required></textarea><br>" +
-                        "  <button type='submit'>Submit Complaint</button>" +
-                        "</form>" +
-                        "<hr>" +
-                        "<h2><a href='/view'>View All Complaints</a></h2>" +
-                        "<h2><a href='/escalate?id=C001'>Escalate Complaint (Staff -> Warden -> Rector -> Admin)</a></h2>" +
-                        "<hr>" +
-                        "<h2>Admin: Update Complaint Status</h2>" +
-                        "<form method='POST' action='/admin'>" +
-                        "  <label>Admin Password:</label><input type='password' name='password' required><br>" +
-                        "  <label>Complaint ID:</label><input type='text' name='id' required><br>" +
-                        "  <label>New Status:</label>" +
-                        "  <select name='status'>" +
-                        "    <option value='IN_PROGRESS'>IN_PROGRESS</option>" +
-                        "    <option value='RESOLVED'>RESOLVED</option>" +
-                        "  </select><br>" +
-                        "  <button type='submit'>Update Status</button>" +
-                        "</form>"
-                );
-        sendHtml(exchange, html);
+        sendPage(exchange, "student", ""); // fresh visit: Student tab, no output
     }
 
-    // ---------- POST /submit ----------
+    // ---------- POST /submit : STUDENT TAB ----------
+    // Student -> Factory Method -> Singleton -> Chain -> ASSIGNED -> Observer
     private static void handleSubmit(HttpExchange exchange) throws IOException {
         Map<String, String> form = parseFormData(exchange.getRequestBody());
 
@@ -94,99 +69,193 @@ public class WebMain {
         String description = form.getOrDefault("description", "").trim();
         int type = Integer.parseInt(form.getOrDefault("type", "0"));
 
-        Student student = new Student(name, room);
+        String output;
+        if (name.isEmpty() || room.isEmpty() || description.isEmpty()) {
+            output = "Please fill in all fields.";
+        } else {
+            Student student = new Student(name, room);
 
-        // FACTORY METHOD
-        Complaint complaint = ComplaintFactory.createComplaint(type, student, description);
+            // FACTORY METHOD: web layer never picks the subclass itself.
+            Complaint complaint = ComplaintFactory.createComplaint(type, student, description);
 
-        // OBSERVER
-        complaint.addObserver(new StudentObserver(student));
+            // OBSERVER: student is registered before the complaint is submitted.
+            complaint.addObserver(new StudentObserver(student));
 
-        // Capture the console-style output that submitComplaint() normally prints.
-        String output = captureOutput(() -> manager.submitComplaint(complaint));
+            // SINGLETON manager receives the complaint; it runs the
+            // CHAIN OF RESPONSIBILITY (routes + assigns staff).
+            output = captureOutput(() -> manager.submitComplaint(complaint));
+        }
 
-        String html = page("Complaint Submitted",
-                "<pre>" + escape(output) + "</pre>" +
-                "<p><a href='/'>Back to Home</a></p>");
-        sendHtml(exchange, html);
+        sendPage(exchange, "student", output); // re-render the ONE page, Student tab
     }
 
-    // ---------- GET /view ----------
-    private static void handleView(HttpExchange exchange) throws IOException {
-        String output = captureOutput(() -> manager.viewAllComplaints());
-
-        String html = page("All Complaints",
-                "<pre>" + escape(output) + "</pre>" +
-                "<p><a href='/'>Back to Home</a></p>");
-        sendHtml(exchange, html);
-    }
-
-    // ---------- POST /admin ----------
+    // ---------- POST /admin : ADMIN TAB (Update Status) ----------
+    // Admin -> Proxy (role check) -> update status -> Observer notification
     private static void handleAdmin(HttpExchange exchange) throws IOException {
         Map<String, String> form = parseFormData(exchange.getRequestBody());
 
         String password = form.getOrDefault("password", "");
         String id = form.getOrDefault("id", "").trim();
-        String statusText = form.getOrDefault("status", "IN_PROGRESS");
-        ComplaintStatus newStatus = ComplaintStatus.valueOf(statusText);
+        ComplaintStatus newStatus =
+                ComplaintStatus.valueOf(form.getOrDefault("status", "IN_PROGRESS"));
 
-        boolean isAdmin = password.equals("admin123");
+        boolean isAdmin = password.equals("admin123"); // demo role check
 
         // PROXY: web layer always goes through AdminProxy, never RealAdminService directly.
         AdminProxy adminProxy = new AdminProxy(isAdmin);
 
         String output = captureOutput(() -> adminProxy.updateComplaintStatus(id, newStatus));
 
-        String html = page("Admin Update",
-                "<pre>" + escape(output) + "</pre>" +
-                "<p><a href='/'>Back to Home</a></p>");
-        sendHtml(exchange, html);
+        sendPage(exchange, "admin", output); // re-render the ONE page, Admin tab
     }
 
-    // ---------- GET /escalate ----------
-    // CHAIN OF RESPONSIBILITY (escalation): Staff -> Warden -> Rector -> Admin.
+    // ---------- POST /escalate : ADMIN TAB (Escalation) ----------
+    // Escalate -> Staff -> Warden -> Rector -> Admin (Chain of Responsibility)
     private static void handleEscalate(HttpExchange exchange) throws IOException {
-        Map<String, String> params = parseQuery(exchange.getRequestURI().getQuery());
-        String id = params.getOrDefault("id", "").trim();
+        Map<String, String> form = parseFormData(exchange.getRequestBody());
+        String id = form.getOrDefault("id", "").trim();
 
         String output = captureOutput(() -> manager.escalateComplaint(id));
 
-        String html = page("Escalation",
-                "<pre>" + escape(output) + "</pre>" +
-                "<p><a href='/'>Back to Home</a></p>");
+        sendPage(exchange, "admin", output);
+    }
+
+    // =================================================================
+    // Renders THE one webpage with the requested tab active.
+    // activeTab: "student" or "admin"; output: pattern log to display.
+    // =================================================================
+    private static void sendPage(HttpExchange exchange, String activeTab, String output)
+            throws IOException {
+
+        boolean adminActive = "admin".equals(activeTab);
+
+        // Pre-check the correct radio button so the right tab is shown
+        // after a form POST (pure CSS tabs -- the server decides which
+        // radio is "checked", no JavaScript needed).
+        String studentChecked = adminActive ? "" : " checked";
+        String adminChecked = adminActive ? " checked" : "";
+
+        String outputBlock = output.isEmpty()
+                ? ""
+                : "<div class='output'><h3>Pattern Output</h3><pre>" + escape(output) + "</pre></div>";
+
+        String html =
+                "<!DOCTYPE html><html><head><title>Hostel Complaint Management System</title>" +
+                "<style>" +
+                "body{font-family:Arial,sans-serif;background:#f0f2f5;margin:0;}" +
+                ".wrap{max-width:760px;margin:30px auto;background:#fff;border-radius:8px;" +
+                "  box-shadow:0 2px 8px rgba(0,0,0,.15);overflow:hidden;}" +
+                "h1{text-align:center;background:#2c3e50;color:#fff;margin:0;padding:18px;}" +
+                // --- CSS-only tabs ---
+                ".tabs{padding:0 20px;}" +
+                ".tabs input{display:none;}" +
+                ".tabs label{display:inline-block;padding:12px 28px;cursor:pointer;" +
+                "  background:#dfe3e8;border:1px solid #ccc;border-bottom:none;" +
+                "  border-radius:8px 8px 0 0;font-weight:bold;color:#555;}" +
+                "#tab-student:checked ~ label[for=tab-student]," +
+                "#tab-admin:checked ~ label[for=tab-admin]{background:#2c3e50;color:#fff;}" +
+                ".tabcontent{display:none;padding:20px;border:1px solid #ccc;}" +
+                "#tab-student:checked ~ #content-student{display:block;}" +
+                "#tab-admin:checked ~ #content-admin{display:block;}" +
+                // --- forms & table ---
+                "form{margin-bottom:25px;}" +
+                "label.field{display:inline-block;width:130px;margin:6px 0;font-weight:bold;}" +
+                "input[type=text],input[type=password],select,textarea{margin:6px 0;padding:6px;}" +
+                "textarea{width:300px;}" +
+                "button{padding:8px 18px;margin-top:8px;background:#2c3e50;color:#fff;" +
+                "  border:none;border-radius:4px;cursor:pointer;}" +
+                "button.escalate{background:#c0392b;}" +
+                "table{border-collapse:collapse;width:100%;margin-top:10px;}" +
+                "th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:14px;}" +
+                "th{background:#ecf0f1;}" +
+                ".output pre{background:#1e1e1e;color:#d4d4d4;padding:14px;border-radius:6px;" +
+                "  overflow-x:auto;font-size:13px;}" +
+                "</style></head><body>" +
+                "<div class='wrap'>" +
+                "<h1>Hostel Complaint Management System</h1>" +
+
+                "<div class='tabs'>" +
+                "<input type='radio' name='tabs' id='tab-student'" + studentChecked + ">" +
+                "<input type='radio' name='tabs' id='tab-admin'" + adminChecked + ">" +
+                "<label for='tab-student'>Student</label>" +
+                "<label for='tab-admin'>Admin</label>" +
+
+                // ---------------- TAB 1: STUDENT ----------------
+                "<div class='tabcontent' id='content-student'>" +
+                "<h2>Submit Complaint</h2>" +
+                "<form method='POST' action='/submit'>" +
+                "<label class='field'>Student Name:</label><input type='text' name='name' required><br>" +
+                "<label class='field'>Room Number:</label><input type='text' name='room' required><br>" +
+                "<label class='field'>Complaint Type:</label>" +
+                "<select name='type'>" +
+                "<option value='1'>Electrical</option>" +
+                "<option value='2'>Plumbing</option>" +
+                "<option value='3'>Cleaning</option>" +
+                "<option value='4'>Internet</option>" +
+                "<option value='5'>Furniture</option>" +
+                "</select><br>" +
+                "<label class='field'>Description:</label><br>" +
+                "<textarea name='description' rows='3' required></textarea><br>" +
+                "<button type='submit'>Submit Complaint</button>" +
+                "</form>" +
+
+                "<h2>View Complaints</h2>" +
+                buildComplaintsTable() +
+                "</div>" +
+
+                // ---------------- TAB 2: ADMIN ----------------
+                "<div class='tabcontent' id='content-admin'>" +
+                "<h2>Update Complaint Status</h2>" +
+                "<form method='POST' action='/admin'>" +
+                "<label class='field'>Admin Password:</label><input type='password' name='password' required><br>" +
+                "<label class='field'>Complaint ID:</label><input type='text' name='id' required><br>" +
+                "<label class='field'>New Status:</label>" +
+                "<select name='status'>" +
+                "<option value='IN_PROGRESS'>IN_PROGRESS</option>" +
+                "<option value='RESOLVED'>RESOLVED</option>" +
+                "</select><br>" +
+                "<button type='submit'>Update Status</button>" +
+                "</form>" +
+
+                "<h2>Escalate Unresolved Complaint</h2>" +
+                "<form method='POST' action='/escalate'>" +
+                "<label class='field'>Complaint ID:</label><input type='text' name='id' required><br>" +
+                "<button type='submit' class='escalate'>Escalate Complaint</button>" +
+                "</form>" +
+                "<p><i>Escalation chain: Maintenance Staff &rarr; Warden &rarr; Rector &rarr; Admin</i></p>" +
+                "</div>" +
+
+                "</div>" + // /.tabs
+                outputBlock +
+                "</div></body></html>";
+
         sendHtml(exchange, html);
     }
 
-    // ---------- Helpers ----------
-
-    // Parses "a=1&b=2" query strings into a Map.
-    private static Map<String, String> parseQuery(String query) {
-        Map<String, String> result = new HashMap<>();
-        if (query == null) return result;
-        for (String pair : query.split("&")) {
-            if (pair.isEmpty()) continue;
-            String[] parts = pair.split("=", 2);
-            result.put(URLDecoder.decode(parts[0], StandardCharsets.UTF_8),
-                    parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "");
+    // Renders the complaints table for the Student tab.
+    // Shows: ID, Student, Type, Department/assigned staff, Status.
+    private static String buildComplaintsTable() {
+        List<Complaint> complaints = manager.getAllComplaints();
+        if (complaints.isEmpty()) {
+            return "<p><i>No complaints submitted yet.</i></p>";
         }
-        return result;
+        StringBuilder sb = new StringBuilder();
+        sb.append("<table><tr><th>Complaint ID</th><th>Student</th><th>Type</th>")
+          .append("<th>Assigned To</th><th>Status</th></tr>");
+        for (Complaint c : complaints) {
+            sb.append("<tr>")
+              .append("<td>").append(escape(c.getId())).append("</td>")
+              .append("<td>").append(escape(c.getStudent().toString())).append("</td>")
+              .append("<td>").append(escape(c.getDepartment())).append("</td>")
+              .append("<td>").append(escape(c.getAssignedTo())).append("</td>")
+              .append("<td>").append(escape(c.getStatus().toString())).append("</td>")
+              .append("</tr>");
+        }
+        sb.append("</table>");
+        return sb.toString();
     }
 
-    // Wraps body content in a simple, consistently styled HTML page.
-    private static String page(String title, String bodyContent) {
-        return "<html><head><title>" + title + "</title>" +
-                "<style>" +
-                "body{font-family:Arial, sans-serif; margin:40px; background:#f5f5f5;}" +
-                "form{background:#fff; padding:15px; border-radius:8px; max-width:400px; margin-bottom:20px;}" +
-                "label{display:inline-block; width:130px; margin:6px 0;}" +
-                "input,select,textarea{margin:6px 0;}" +
-                "button{padding:6px 14px; margin-top:10px;}" +
-                "pre{background:#fff; padding:15px; border-radius:8px;}" +
-                "</style></head><body>" +
-                "<h1>Hostel Complaint Management System</h1>" +
-                bodyContent +
-                "</body></html>";
-    }
+    // ---------- Helpers ----------
 
     private static void sendHtml(HttpExchange exchange, String html) throws IOException {
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
@@ -212,14 +281,19 @@ public class WebMain {
     }
 
     // Escapes HTML special characters so complaint text can't break the page.
+    // (Entities are built via concatenation so no editor can mangle them.)
     private static String escape(String text) {
-        return text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
+        String amp = "&" + "amp;";
+        String lt  = "&" + "lt;";
+        String gt  = "&" + "gt;";
+        return text.replace("&", amp)
+                .replace("<", lt)
+                .replace(">", gt);
     }
 
-    // Same System.out capture trick used in MainGUI, so the same
-    // pattern classes can be reused unchanged in a web context.
+    // Same System.out capture trick used by the other front-ends, so the
+    // pattern classes' console output (routing, notifications) can be
+    // displayed inside the webpage.
     private static String captureOutput(Runnable action) {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         PrintStream original = System.out;

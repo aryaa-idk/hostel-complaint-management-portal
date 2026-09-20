@@ -67,12 +67,12 @@ Escalation chain (if unresolved)  <- Staff -> Warden -> Rector -> Admin
 ## 3. FILE STRUCTURE AND WHAT EACH FILE DOES
 
 ```
-Main.java                      Console menu front-end
-                               (submit / view / details / admin update / escalate)
-MainGUI.java                   Swing GUI front-end
-                               (tabs: Submit Complaint / View Complaints / Admin Panel)
-WebMain.java                   Optional browser front-end (http://localhost:8080)
-                               - built-in JDK HttpServer only, no libraries
+WebMain.java                   MAIN front-end: ONE webpage (http://localhost:8080)
+                               with two CSS-only tabs: Student / Admin.
+                               - Student tab: Submit Complaint + View Complaints table
+                               - Admin tab: Update Status (Proxy) + Escalate Complaint
+                               - built-in JDK HttpServer only, no JS, no frameworks
+Main.java                      Console menu front-end (same backend, for quick tests)
 
 factory/
   ComplaintFactory.java        FACTORY METHOD: creates the right complaint object
@@ -115,9 +115,11 @@ model/
   Student.java                 Student data class (name, room number)
 ```
 
-Three interchangeable front-ends (console / Swing GUI / web) share the SAME
-pattern classes. The GUI only collects input and shows output — it never
-decides routing, escalation, notifications or storage.
+The tabs on the webpage are ONLY a UI organization mechanism (plain
+HTML + CSS radio-button tabs). All design-pattern logic stays in the Java
+backend; the web layer only collects input, displays output, and calls the
+pattern classes — it never decides routing, escalation, notifications or
+storage.
 
 ---
 
@@ -305,11 +307,10 @@ Escalation (for unresolved complaints): `Staff -> Warden -> Rector -> Admin`
 ## 7. HOW TO COMPILE AND RUN
 
 ```
-javac -encoding UTF-8 Main.java MainGUI.java WebMain.java model/*.java factory/*.java singleton/*.java chain/*.java observer/*.java proxy/*.java
+javac -encoding UTF-8 Main.java WebMain.java model/*.java factory/*.java singleton/*.java chain/*.java observer/*.java proxy/*.java
 
-java MainGUI     # desktop GUI  (best for the demo)
+java WebMain     # browser UI at http://localhost:8080/  (best for the demo)
 java Main        # console menu
-java WebMain     # browser UI at http://localhost:8080/
 ```
 Admin password for the demo: `admin123`
 
@@ -317,19 +318,22 @@ Admin password for the demo: `admin123`
 
 ## 8. LIVE DEMO SCRIPT (for the teacher)
 
-1. **Submit:** GUI tab "Submit Complaint" → Name, Room, Type = Plumbing,
-   Description → Submit.
+1. Run `java WebMain`, open http://localhost:8080/ — ONE page, two tabs
+   (Student / Admin).
+2. **Student tab – Submit:** Name, Room, Type = Plumbing, Description →
+   Submit Complaint.
    Shows: Factory created object → Singleton manager received it → Chain
    routed to "Plumbing Maintenance Staff" → status ASSIGNED → Observer
-   printed the notification.
-2. **Proxy (denied):** Admin tab → WRONG password + complaint ID → Update
-   Status → "Access Denied" message (role check).
-3. **Proxy (allowed) + Observer:** password `admin123`, status IN_PROGRESS →
-   status changes and the student is notified.
-4. **Observer (final):** update to RESOLVED → final notification.
-5. **Escalation:** submit a fresh complaint, leave it unresolved, click
-   "Escalate Complaint" repeatedly → Maintenance Staff → Warden → Rector →
-   Admin.
+   notification in the "Pattern Output" box. The View Complaints table
+   now lists the complaint (ID, Student, Type, Assigned To, Status).
+3. **Admin tab – Proxy (denied):** WRONG password + complaint ID →
+   Update Status → "Access Denied" message (role check).
+4. **Admin tab – Proxy (allowed) + Observer:** password `admin123`,
+   status IN_PROGRESS → status changes, student notified.
+5. Update to RESOLVED → final Observer notification.
+6. **Escalation:** submit a fresh complaint, leave it unresolved, then in
+   the Admin tab click "Escalate Complaint" repeatedly → Maintenance Staff
+   → Warden → Rector → Admin.
 
 ---
 
