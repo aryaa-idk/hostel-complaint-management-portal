@@ -38,7 +38,15 @@ public class WebMain {
     private static ComplaintManager manager = ComplaintManager.getInstance();
 
     public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+        // DEPLOYMENT: use the PORT environment variable when present (cloud
+        // platforms inject it); fall back to 8080 when running locally.
+        // Bind to 0.0.0.0 explicitly so cloud traffic is accepted.
+        int port = Integer.parseInt(
+                System.getenv().getOrDefault("PORT", "8080")
+        );
+
+        HttpServer server =
+                HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 
         server.createContext("/", WebMain::handleHome);       // GET: the one webpage
         server.createContext("/submit", WebMain::handleSubmit);   // POST: student submits
