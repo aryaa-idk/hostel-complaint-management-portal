@@ -156,7 +156,7 @@ public class WebMain {
                 "h1{text-align:center;background:#2c3e50;color:#fff;margin:0;padding:18px;}" +
                 // --- CSS-only tabs ---
                 ".tabs{padding:0 20px;}" +
-                ".tabs input{display:none;}" +
+                ".tabs > input[type=radio]{display:none;}" +
                 ".tabs label{display:inline-block;padding:12px 28px;cursor:pointer;" +
                 "  background:#dfe3e8;border:1px solid #ccc;border-bottom:none;" +
                 "  border-radius:8px 8px 0 0;font-weight:bold;color:#555;}" +
